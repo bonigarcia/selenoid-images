@@ -2,26 +2,88 @@
 CHROMEDRIVER_PORT=9515
 BOOTSTRAP_PORT=4725
 EMULATOR=emulator-5554
-CHROME_ARGS=""
-TIMEOUT=${TIMEOUT:-"60"}
-SKIN=${SKIN:-"WXGA800"}
+APPIUM_ARGS=${APPIUM_ARGS:-""}
+EMULATOR_ARGS=${EMULATOR_ARGS:-""}
+PORT=${PORT:-"4444"}
+DISPLAY_NUM=99
+export DISPLAY=":$DISPLAY_NUM"
+SCREEN_RESOLUTION=${SCREEN_RESOLUTION:-"1920x1080x24"}
+SKIN=${SKIN:-"1080x1920"}
+STOP=""
+VERBOSE=${VERBOSE:-""}
 
-if [ -n "$DENSITY" ]; then
-    echo "hw.lcd.density=$DENSITY" >> /root/.android/avd/android6.0-1.avd/config.ini
+if [ -z "$VERBOSE" ]; then
+    if [ -z "$APPIUM_ARGS" ]; then
+        APPIUM_ARGS="--log-level error"
+    fi
+else
+    EMULATOR_ARGS="$EMULATOR_ARGS -verbose"
 fi
 
-Xorg :0 &
-sleep 1
-x11vnc -display ":0" -passwd selenoid -shared -forever -loop500 -rfbport 5900 -rfbportv6 5900 -logfile /var/log/x11vnc.log &
-ANDROID_AVD_HOME=/root/.android/avd DISPLAY=:0 /opt/android-sdk-linux/emulator/emulator -no-audio -no-jni -avd android6.0-1 -sdcard /sdcard.img -skin "$SKIN" -skindir /opt/android-sdk-linux/platforms/android-23/skins/ -verbose -gpu swiftshader -qemu -enable-kvm &
-sleep 30
 
-#if [ -n "$INSTALL_APP" ]; then
-#	for i in 1 2 3 4 5; do adb install /chrome.apk && break || sleep 15 && echo "retrying install app"; done
-#fi
+clean() {
+  STOP="yes"
+  if [ -n "$APPIUM_PID" ]; then
+    kill -TERM "$APPIUM_PID"
+  fi
+  if [ -n "$EMULATOR_PID" ]; then
+    kill -TERM "$EMULATOR_PID"
+  fi
+  if [ -n "$X11VNC_PID" ]; then
+    kill -TERM "$X11VNC_PID"
+  fi
+  if [ -n "$DEVTOOLS_PID" ]; then
+    kill -TERM "$DEVTOOLS_PID"
+  fi
+  if [ -n "$XVFB_PID" ]; then
+    kill -TERM "$XVFB_PID"
+  fi
+}
 
-sleep 5
-#if [ -z "$ADD_APP" ]; then
-#	CHROME_ARGS="--chromedriver-port $CHROMEDRIVER_PORT --app-pkg \"com.android.chrome\" --app-activity \"com.google.android.apps.chrome.Main\" --no-reset"
-#fi
-/opt/node_modules/.bin/appium -a 0.0.0.0 -p 4444 -bp $BOOTSTRAP_PORT -U $EMULATOR --platform-name Android --device-name android --log-timestamp --log-no-colors --default-capabilities "{\"newCommandTimeout\": \"$TIMEOUT\"}" $CHROME_ARGS
+trap clean SIGINT SIGTERM
+
+/usr/bin/xvfb-run -e /dev/stdout -l -n "$DISPLAY_NUM" -s "-ac -screen 0 $SCREEN_RESOLUTION -noreset -listen tcp" /usr/bin/fluxbox -display "$DISPLAY" -log /tmp/fluxbox.log 2>/dev/null &
+XVFB_PID=$!
+
+retcode=1
+until [ $retcode -eq 0 ] || [ -n "$STOP" ]; do
+  DISPLAY="$DISPLAY" wmctrl -m >/dev/null 2>&1
+  retcode=$?
+  if [ $retcode -ne 0 ]; then
+    echo Waiting X server...
+    sleep 0.1
+  fi
+done
+if [ -n "$STOP" ]; then exit 0; fi
+
+if [ "$ENABLE_VNC" != "true" ] && [ "$ENABLE_VIDEO" != "true" ]; then
+    EMULATOR_ARGS="$EMULATOR_ARGS -no-window"
+fi
+ANDROID_AVD_HOME=/root/.android/avd DISPLAY="$DISPLAY" /opt/android-sdk-linux/emulator/emulator ${EMULATOR_ARGS} -writable-system -no-boot-anim -no-audio -no-jni -avd @AVD_NAME@ -sdcard /sdcard.img -skin "$SKIN" -skindir /opt/android-sdk-linux/platforms/@PLATFORM@/skins/ -gpu swiftshader_indirect -ranchu -qemu -enable-kvm &
+EMULATOR_PID=$!
+
+if [ "$ENABLE_VNC" == "true" ]; then
+    x11vnc -display "$DISPLAY" -passwd selenoid -shared -forever -loop500 -rfbport 5900 -rfbportv6 5900 -logfile /tmp/x11vnc.log &
+    X11VNC_PID=$!
+fi
+
+while [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" != "1" ] && [ -z "$STOP" ] ; do sleep 1; done
+if [ -n "$STOP" ]; then exit 0; fi
+
+DEFAULT_CAPABILITIES='"appium:androidNaturalOrientation": true, "appium:deviceName": "Android Emulator", "platformName": "Android", "appium:automationName": "UiAutomator2", "appium:noReset": true, "appium:udid": "'$EMULATOR'", "appium:systemPort": '$BOOTSTRAP_PORT', "appium:newCommandTimeout": 90'
+
+if [ -n "@CHROME_MOBILE@" ]; then
+    while ip addr | grep inet | grep -q tentative > /dev/null; do sleep 0.1; done
+    DEFAULT_CAPABILITIES=$DEFAULT_CAPABILITIES', "appium:chromedriverPort": '$CHROMEDRIVER_PORT
+    /usr/bin/devtools --android &
+    DEVTOOLS_PID=$!
+fi
+
+if [ -x "/usr/bin/chromedriver" ]; then
+    DEFAULT_CAPABILITIES=$DEFAULT_CAPABILITIES',"appium:chromedriverExecutable": "/usr/bin/chromedriver"'
+fi
+
+/opt/node_modules/.bin/appium -a 0.0.0.0 -p "$PORT" --log-timestamp --log-no-colors ${APPIUM_ARGS} --base-path "/wd/hub" --default-capabilities "{$DEFAULT_CAPABILITIES}" &
+APPIUM_PID=$!
+
+wait

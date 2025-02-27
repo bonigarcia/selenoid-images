@@ -1,80 +1,96 @@
-FROM ubuntu:14.04
+FROM golang:1.22-bullseye as go
 
-ARG DEVICE=""
-ARG SDCARD_SIZE=500
-ARG ANDROID_SDK_URL="https://dl.google.com/android/repository/sdk-tools-linux-3859397.zip"
-ARG APPIUM_VERSION="1.7.1"
+COPY tmp/devtools /devtools
 
 RUN \
-	dpkg --add-architecture i386 && \
-	apt-get update && \
-	apt-get install -y curl software-properties-common && \
-	add-apt-repository -y ppa:webupd8team/java && \
-	curl --silent --location https://deb.nodesource.com/setup_6.x | bash - && \
-	echo "oracle-java8-installer shared/accepted-oracle-license-v1-1 select true" | debconf-set-selections && \
-	apt-get install -y --no-install-recommends \
-	    ant \
-	    autossh \
+    apt-get update && \
+    apt-get install -y upx-ucl libx11-dev && \
+    cd /devtools && \
+    GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" && \
+    upx /devtools/devtools
+
+FROM ubuntu:20.04
+
+ARG APPIUM_VERSION="1.8.1"
+
+RUN \
+    apt update && \
+    apt remove -y libcurl4 && \
+    apt install -y apt-transport-https ca-certificates tzdata locales libcurl4 curl gnupg && \
+	curl --silent --location https://deb.nodesource.com/setup_18.x | bash - && \
+	apt install -y --no-install-recommends \
 	    curl \
-	    git \
-	    dbus \
-	    gettext-base \
-	    libncurses5:i386 \
-	    libstdc++6:i386 \
-	    lib32stdc++6 \
-	    lib32z1 \
-	    libgconf2-4 \
+	    iproute2 \
 	    nodejs \
-	    oracle-java8-installer  \
-	    python \
-	    qemu-kvm \
-	    qemu-system-x86 \
-	    screen \
+	    openjdk-8-jdk-headless \
 	    unzip \
-	    zlib1g:i386 \
-	    xserver-xorg \
-	    xserver-xorg-video-dummy \
-	    x11-xserver-utils \
-	    x11vnc \
-	    libgl1-mesa-dev \
-	    libx11-6 \
-	    libx11-dev \
-	    libx11-6:i386 \
-	    libx11-dev:i386 && \
-	cd / && npm install --prefix ./opt/ appium@"$APPIUM_VERSION" wd && \
-	apt-get clean && \
-	rm -rf /var/lib/apt/lists/* && \
-	rm -rf /var/cache/oracle-jdk8-installer && \
-	rm -rf /tmp/*
+	    xvfb \
+	    libpulse0 \
+		libxcomposite1 \
+		libxcursor1 \
+		libxi6 \
+		libasound2 \
+        fluxbox \
+        x11vnc \
+        feh \
+        wmctrl \
+	    libglib2.0-0 && \
+    apt-get clean && \
+    rm -Rf /tmp/* && rm -Rf /var/lib/apt/lists/*
 
-# Static files
-COPY xorg.conf /etc/X11/
+RUN \
+    cd / && \
+    npm install --prefix ./opt/ appium@$APPIUM_VERSION && \
+    /opt/node_modules/.bin/appium driver install uiautomator2
+
 COPY android.conf /etc/ld.so.conf.d/
-
-# You may want to optionally copy some APK, e.g. Chrome Mobile version
-#COPY chrome.apk /
+COPY fluxbox/aerokube /usr/share/fluxbox/styles/
+COPY fluxbox/init /root/.fluxbox/
+COPY fluxbox/aerokube.png /usr/share/images/fluxbox/
+COPY --from=go /devtools/devtools /usr/bin/
 
 # Android SDK
 ENV ANDROID_HOME /opt/android-sdk-linux
 ENV PATH /opt/android-sdk-linux/platform-tools:/opt/android-sdk-linux/tools:/opt/android-sdk-linux/tools/bin:/opt/android-sdk-linux/emulator:$PATH
-ENV LD_LIBRARY_PATH ${ANDROID_HOME}/emulator/lib64/:${ANDROID_HOME}/emulator/lib64/gles_mesa:${ANDROID_HOME}/emulator/lib64/qt/lib/:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH ${ANDROID_HOME}/emulator/lib64:${ANDROID_HOME}/emulator/lib64/gles_swiftshader:${ANDROID_HOME}/emulator/lib64/qt/lib:${ANDROID_HOME}/emulator/lib64/vulkan:${LD_LIBRARY_PATH}
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64
+
+ARG ANDROID_DEVICE=""
+ARG REPLACE_IMG="y"
+ARG AVD_NAME="android6.0-1"
+ARG BUILD_TOOLS="build-tools;23.0.1"
+ARG PLATFORM="android-23"
+ARG EMULATOR_IMAGE="system-images;android-23;default;x86"
+ARG EMULATOR_IMAGE_TYPE="default"
+ARG ANDROID_ABI="x86"
+ARG SDCARD_SIZE="500"
+ARG USERDATA_SIZE="500"
+
 RUN \
-	curl -o sdk-tools.zip "$ANDROID_SDK_URL"  && \
-	mkdir -p /opt/android-sdk-linux && \
-	unzip sdk-tools.zip -d /opt/android-sdk-linux && \
+	curl -o sdk-tools.zip https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip && \
+	mkdir -p /opt/android-sdk-linux /root/.config/Android\ Open\ Source\ Project/ && \
+	unzip -q sdk-tools.zip -d /opt/android-sdk-linux && \
 	rm sdk-tools.zip && \
-	yes | sdkmanager --licenses && \
-	sdkmanager "tools" "platform-tools" "build-tools;23.0.1" "platforms;android-23" "system-images;android-23;default;x86" && \
+	yes | sdkmanager --licenses
+
+RUN \
+	sdkmanager "emulator" "tools" "platform-tools" "$BUILD_TOOLS" "platforms;$PLATFORM" "$EMULATOR_IMAGE" && \
 	mksdcard "$SDCARD_SIZE"M sdcard.img && \
-	echo "no" | ( \ 
-	    ([ -n "$DEVICE" ] && avdmanager create avd -n android6.0-1 -k "system-images;android-23;default;x86" --abi x86 --device "$DEVICE" --sdcard /sdcard.img ) || \
-	    avdmanager create avd -n android6.0-1 -k "system-images;android-23;default;x86" --abi x86 --sdcard /sdcard.img \
+	echo "no" | ( \
+	    ([ -n "$ANDROID_DEVICE" ] && avdmanager create avd -n "$AVD_NAME" -k "$EMULATOR_IMAGE" --abi "$ANDROID_ABI" --device "$ANDROID_DEVICE" --sdcard /sdcard.img ) || \
+	    avdmanager create avd -n "$AVD_NAME" -k "$EMULATOR_IMAGE" --abi "$ANDROID_ABI" --sdcard /sdcard.img \
     ) && \
 	ldconfig && \
-	resize2fs /root/.android/avd/android6.0-1.avd/userdata.img 350M && \
-	mv /root/.android/avd/android6.0-1.avd/userdata.img /root/.android/avd/android6.0-1.avd/userdata-qemu.img && \
-	rm /opt/android-sdk-linux/system-images/android-23/default/x86/userdata.img
+	( \
+	    resize2fs /root/.android/avd/$AVD_NAME.avd/userdata.img "$USERDATA_SIZE"M || \
+	    /opt/android-sdk-linux/emulator/qemu-img resize -f raw /root/.android/avd/$AVD_NAME.avd/userdata.img "$USERDATA_SIZE"M \
+    ) && \
+	([ -z "$REPLACE_IMG" ] || mv /root/.android/avd/$AVD_NAME.avd/userdata.img /root/.android/avd/$AVD_NAME.avd/userdata-qemu.img ) && \
+	rm /opt/android-sdk-linux/system-images/$PLATFORM/$EMULATOR_IMAGE_TYPE/"$ANDROID_ABI"/userdata.img
+
+COPY ["Emulator.conf", "/root/.config/Android Open Source Project/Emulator.conf"]
+COPY emulator-snapshot.sh tmp/chromedriver* *.apk /usr/bin/
 
 # Entrypoint
-COPY entrypoint.sh /
-ENTRYPOINT /entrypoint.sh
+COPY tmp/entrypoint.sh /
+ENTRYPOINT ["/entrypoint.sh"]

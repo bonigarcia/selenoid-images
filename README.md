@@ -1,5 +1,10 @@
-# Selenoid Docker Images
-This repository contains [Docker](http://docker.com/) build files to be used for [Selenoid](http://github.com/aerokube/selenoid) project. You can find prebuilt images [here](https://hub.docker.com/u/selenoid/).
+# Browser Images
+[![Build Status](https://github.com/aerokube/images/workflows/build/badge.svg)](https://github.com/aerokube/images/actions?query=workflow%3Abuild)
+[![Release](https://img.shields.io/github/release/aerokube/images.svg)](https://github.com/aerokube/images/releases/latest)
+
+**UNMAINTAINED**. Consider https://aerokube.com/moon/latest as alternative.
+
+This repository contains [Docker](http://docker.com/) build files to be used for [Selenoid](http://github.com/aerokube/selenoid) and [Moon](http://github.com/aerokube/moon) projects. You can find prebuilt images [here](https://hub.docker.com/u/selenoid/).
 
 ## Download Statistics
 
@@ -9,17 +14,11 @@ This repository contains [Docker](http://docker.com/) build files to be used for
 
 ### Opera: [![Opera Docker Pulls](https://img.shields.io/docker/pulls/selenoid/opera.svg)](https://hub.docker.com/r/selenoid/opera)
 
-## How images are built
+### Android: [![Android Docker Pulls](https://img.shields.io/docker/pulls/selenoid/android.svg)](https://hub.docker.com/r/selenoid/android)
 
-![layers](layers.png)
+## Building Images
 
-Each image consists of 3 or 4 layers:
-1) **Base layer** - contains stuff needed in every image: Xvfb, fonts, cursor blinking fix, timezone definition and so on. This layer is always built manually.
-2) **Optional Java layer** - contains latest Java Runtime Environment. Only needed for old Firefox versions incompatible with Geckodriver. This layer is always built manually.
-3) **Browser layer** - contains browser binary. We create two versions: with APT cache and without it. The latter is then used to add driver layer.
-4) **Driver layer** - contains either respective web driver binary or corresponding Selenium server version.
-
-Building procedure is automated with shell scripts ```selenium/build-dev.sh``` and ```selenium/build.sh``` that generate Dockerfile and then create browser and driver layers respectively. Before push each image is tested with these [tests](https://github.com/aerokube/selenoid-container-tests).
+Moved to: http://aerokube.com/images/latest/#_building_images
 
 ## Image information
-Moved to: http://aerokube.com/selenoid/latest/#_browser_image_information
+Moved to: http://aerokube.com/images/latest/#_browser_image_information
